@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
@@ -42,6 +43,7 @@ public final class LauncherSettingsActivity extends Activity {
     private int dockOpacity;
     private boolean animations;
     private boolean advancedEffects;
+    private String stockHomeToEnable;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -150,10 +152,14 @@ public final class LauncherSettingsActivity extends Activity {
             changed();
             refresh();
         });
-        findViewById(R.id.defaultHomeChoice).setOnClickListener(v -> {
-            Toast.makeText(this, R.string.home_settings_help, Toast.LENGTH_LONG).show();
-            open(new Intent(Settings.ACTION_HOME_SETTINGS));
-        });
+        findViewById(R.id.defaultHomeChoice).setOnClickListener(v ->
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.home_settings)
+                        .setMessage(R.string.home_settings_help)
+                        .setPositiveButton(android.R.string.ok,
+                                (dialog, which) -> returnToStockHome())
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show());
         findViewById(R.id.tvSettingsChoice).setOnClickListener(v ->
                 open(SystemSettings.intent(this, Settings.ACTION_SETTINGS)));
         refresh();
@@ -165,6 +171,50 @@ public final class LauncherSettingsActivity extends Activity {
         LinearLayout row = (LinearLayout) views[0].getParent();
         row.removeAllViews();
         for (int i = views.length - 1; i >= 0; i--) row.addView(views[i]);
+    }
+
+    private void returnToStockHome() {
+        PackageManager pm = getPackageManager();
+        Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+        List<ResolveInfo> candidates = pm.queryIntentActivities(home, PackageManager.MATCH_DISABLED_COMPONENTS);
+        List<String> disabledHomes = new ArrayList<>();
+        for (ResolveInfo candidate : candidates) {
+            String pkg = candidate.activityInfo.packageName;
+            if (pkg.equals(getPackageName()) || pkg.equals("com.android.tv.settings")
+                    || pkg.contains("setupwraith")) continue;
+            int state = pm.getApplicationEnabledSetting(pkg);
+            if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                    || state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                    || state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) {
+                if (!disabledHomes.contains(pkg)) disabledHomes.add(pkg);
+            }
+        }
+        if (disabledHomes.size() == 1) {
+            stockHomeToEnable = disabledHomes.get(0);
+            Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + stockHomeToEnable));
+            open(details);
+            return;
+        }
+        open(new Intent(Settings.ACTION_HOME_SETTINGS));
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (stockHomeToEnable == null) return;
+        String pkg = stockHomeToEnable;
+        stockHomeToEnable = null;
+        try {
+            if (getPackageManager().getApplicationEnabledSetting(pkg)
+                    == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                    || getPackageManager().getApplicationEnabledSetting(pkg)
+                    == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                open(new Intent(Settings.ACTION_HOME_SETTINGS));
+            }
+        } catch (IllegalArgumentException ignored) {
+            // The stock launcher was removed while App Info was open; leave Home unchanged.
+        }
     }
 
     private void showWallpaperPicker() {
